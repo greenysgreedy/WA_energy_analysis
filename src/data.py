@@ -361,6 +361,87 @@ def esroi_masks(dates, facility_code: str | None = None) -> np.ndarray:
     return mask
 
 
+#: Column names in the cleaned market requirements table, in SERVICES order.
+FCESS_REQUIREMENT_COLUMNS = tuple(f"{service}_requirement" for service in SERVICES)
+
+
+@lru_cache(maxsize=1)
+def load_market_requirements() -> pd.DataFrame:
+    """Five-minute FCESS requirement quantities for the whole SWIS, in MW."""
+    return pd.read_parquet(_require(PROCESSED / "market_requirements.parquet"))
+
+
+def requirement_arrays(dates) -> np.ndarray:
+    """FCESS requirement as ``(n_days, 5, 288)`` aligned to ``dates``.
+
+    Days with no published requirement get zeros, which switches the market-share cap
+    to zero for that day rather than silently allowing unlimited enablement.
+    """
+    requirements = load_market_requirements()
+    wanted = pd.DatetimeIndex(pd.to_datetime(pd.Index(dates)))
+    subset = requirements.loc[requirements["trading_date"].isin(wanted)].sort_values(
+        "interval_start"
+    )
+
+    out = np.zeros((len(wanted), len(FCESS_REQUIREMENT_COLUMNS), INTERVALS_PER_DAY_5MIN))
+    position = {date: row for row, date in enumerate(wanted)}
+
+    for date, group in subset.groupby("trading_date", observed=True):
+        if len(group) != INTERVALS_PER_DAY_5MIN:
+            continue
+        row = position[date]
+        for service, column in enumerate(FCESS_REQUIREMENT_COLUMNS):
+            out[row, service] = group[column].to_numpy(dtype=float)
+
+    return np.nan_to_num(out)
+
+
+def accredited_fleet_mw() -> dict[str, float]:
+    """Total accredited quantity across the SWIS for each FCESS service, in MW.
+
+    Taken from the FCESS accreditation register, which is a current snapshot rather
+    than a history. The fleet grew over the study period, so using today's totals
+    understates an entrant's share in the earlier years; this is stated in
+    ``docs/assumptions.md`` F11 and varied as a sensitivity.
+    """
+    register = load_fcess_accreditation()
+    mapping = {
+        "contingency_raise": "max_contingency_raise_mw",
+        "contingency_lower": "max_contingency_lower_mw",
+        "regulation_raise": "max_regulation_raise_mw",
+        "regulation_lower": "max_regulation_lower_mw",
+        "rocof": "max_rocof_mw",
+    }
+    return {service: float(register[column].sum()) for service, column in mapping.items()}
+
+
+def entrant_share(accredited_mw: dict[str, float]) -> dict[str, float]:
+    """Share of each FCESS requirement a new entrant of this size would win.
+
+    A new battery adds its accredited quantity to an already accredited fleet, so its
+    pro-rata share is ``own / (fleet + own)``. The SWIS is heavily oversupplied with
+    accredited capability — about 2,000 MW of contingency raise against a requirement
+    averaging under 200 MW — so this share is small, which is exactly why FCESS prices
+    fell as far as they did.
+    """
+    fleet = accredited_fleet_mw()
+    return {
+        service: (own / (fleet.get(service, 0.0) + own)) if own > 0 else 0.0
+        for service, own in accredited_mw.items()
+    }
+
+
+def fcess_caps(dates, accredited_mw: dict[str, float], *, share: dict[str, float] | None = None):
+    """Per-interval enablement ceiling from the market requirement and the entrant's share.
+
+    Returns ``(n_days, 5, 288)`` in :data:`src.model.SERVICES` order.
+    """
+    share = share if share is not None else entrant_share(accredited_mw)
+    requirement = requirement_arrays(dates)
+    multipliers = np.array([share.get(service, 0.0) for service in SERVICES]).reshape(1, -1, 1)
+    return requirement * multipliers
+
+
 def clear_caches() -> None:
     """Drop cached tables. Useful in notebooks after re-running the cleaning step."""
     for function in (
@@ -370,5 +451,6 @@ def clear_caches() -> None:
         load_capacity_credits,
         load_reserve_capacity_prices,
         load_esroi,
+        load_market_requirements,
     ):
         function.cache_clear()

@@ -259,7 +259,21 @@ class DispatchLP:
         *,
         dt: float = DT_HOURS,
         esroi_mask: np.ndarray | None = None,
+        fcess_cap: np.ndarray | None = None,
     ) -> None:
+        """Build the LP.
+
+        Parameters
+        ----------
+        fcess_cap
+            Optional ``(5, T)`` per-interval ceiling on enablement, in :data:`SERVICES`
+            order, applied on top of the accredited maxima. This is how the market
+            requirement enters the model: a battery cannot be paid for holding more
+            reserve than the market procured, and a single entrant wins only a share of
+            what was procured. Without it the optimiser enables to its accreditation in
+            every interval, which for a 100 MW battery would be a quarter of the whole
+            SWIS contingency raise requirement held continuously.
+        """
         import highspy
 
         if n_intervals < 1:
@@ -273,6 +287,14 @@ class DispatchLP:
         )
         if self.esroi_mask.shape != (self.T,):
             raise ValueError(f"esroi_mask must have shape ({self.T},)")
+
+        if fcess_cap is not None:
+            fcess_cap = np.asarray(fcess_cap, dtype=float)
+            if fcess_cap.shape != (N_SERVICES, self.T):
+                raise ValueError(f"fcess_cap must have shape ({N_SERVICES}, {self.T})")
+            if (fcess_cap < -1e-9).any():
+                raise ValueError("fcess_cap must be non-negative")
+        self.fcess_cap = fcess_cap
 
         self._highspy = highspy
         self.h = highspy.Highs()
@@ -312,7 +334,10 @@ class DispatchLP:
 
         for s, service in enumerate(SERVICES):
             start = self.i_enable(s, 0)
-            upper[start : start + self.T] = p.accredited_for(service)
+            ceiling = np.full(self.T, p.accredited_for(service))
+            if self.fcess_cap is not None:
+                ceiling = np.minimum(ceiling, self.fcess_cap[s])
+            upper[start : start + self.T] = ceiling
 
         soc_start = self.i_soc(0)
         lower[soc_start : soc_start + self.T + 1] = p.soc_min_mwh
@@ -552,6 +577,7 @@ def solve_dispatch(
     fcess_prices: np.ndarray | None = None,
     dt: float = DT_HOURS,
     esroi_mask: np.ndarray | None = None,
+    fcess_cap: np.ndarray | None = None,
     soc_initial_mwh: float | None = None,
     cyclic: bool | None = None,
 ) -> DispatchResult:
@@ -560,7 +586,9 @@ def solve_dispatch(
     Convenient for single windows and for the tests. The rolling-horizon strategy uses
     :class:`DispatchLP` directly so the model is built once and re-solved.
     """
-    lp = DispatchLP(len(energy_price), params, dt=dt, esroi_mask=esroi_mask)
+    lp = DispatchLP(
+        len(energy_price), params, dt=dt, esroi_mask=esroi_mask, fcess_cap=fcess_cap
+    )
     return lp.solve(energy_price, fcess_prices, soc_initial_mwh=soc_initial_mwh, cyclic=cyclic)
 
 

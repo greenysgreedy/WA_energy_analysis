@@ -260,6 +260,63 @@ def test_fcess_enablement_is_capped_by_the_accredited_quantity() -> None:
     assert result.total_revenue == pytest.approx(800.0, abs=1e-6)
 
 
+def test_a_market_requirement_cap_binds_before_the_accreditation() -> None:
+    """A battery cannot be paid for holding more reserve than the market procured.
+
+    Accreditation allows 10 MW, but the per-interval cap allows 3 MW then 7 MW, so
+    revenue is $100 x (3 + 7) = $1,000 rather than $2,000.
+    """
+    params = BatteryParams(
+        p_max_mw=10.0,
+        duration_h=2.0,
+        round_trip_efficiency=1.0,
+        enabled_services=("contingency_raise",),
+        fcess_raise_duration_h=0.25,
+    )
+    cap = np.zeros((len(SERVICES), 2))
+    cap[SERVICES.index("contingency_raise")] = [3.0, 7.0]
+
+    result = solve_dispatch(
+        np.zeros(2),
+        params,
+        fcess_prices=fcess_prices_for("contingency_raise", 100.0, 2),
+        fcess_cap=cap,
+        dt=DT,
+    )
+
+    assert result.enablement["contingency_raise"] == pytest.approx([3.0, 7.0], abs=1e-6)
+    assert result.total_revenue == pytest.approx(1000.0, abs=1e-6)
+
+
+def test_a_requirement_cap_can_only_reduce_revenue() -> None:
+    rng = np.random.default_rng(11)
+    prices = rng.normal(60.0, 120.0, size=96)
+    fcess = np.abs(rng.normal(10.0, 15.0, size=(len(SERVICES), 96)))
+    params = BatteryParams(p_max_mw=10.0, duration_h=2.0)
+
+    uncapped = solve_dispatch(prices, params, fcess_prices=fcess, dt=1.0 / 12.0)
+    capped = solve_dispatch(
+        prices,
+        params,
+        fcess_prices=fcess,
+        fcess_cap=np.full((len(SERVICES), 96), 1.0),
+        dt=1.0 / 12.0,
+    )
+
+    assert capped.total_revenue <= uncapped.total_revenue + 1e-6
+    for quantity in capped.enablement.values():
+        assert quantity.max() <= 1.0 + 1e-6
+
+
+def test_rejects_a_malformed_requirement_cap() -> None:
+    params = BatteryParams(p_max_mw=10.0, duration_h=2.0)
+
+    with pytest.raises(ValueError, match="fcess_cap must have shape"):
+        DispatchLP(4, params, fcess_cap=np.zeros((len(SERVICES), 3)))
+    with pytest.raises(ValueError, match="non-negative"):
+        DispatchLP(4, params, fcess_cap=np.full((len(SERVICES), 4), -1.0))
+
+
 def test_raise_enablement_competes_with_discharging_for_power_headroom() -> None:
     """Raise headroom and discharge share the 10 MW rating.
 
