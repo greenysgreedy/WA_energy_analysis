@@ -30,6 +30,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.paths import (
+    DT_HOURS,
     INTERVALS_PER_DAY_5MIN,
     INTERVALS_PER_DAY_30MIN,
     PROCESSED,
@@ -88,7 +89,12 @@ def trading_date(interval_start: pd.Series) -> pd.Series:
 
 
 def read_aemo_csv(path: Path, **kwargs) -> pd.DataFrame:
-    """Read a raw AEMO CSV, dropping the ``Extracted At`` column."""
+    """Read a raw AEMO CSV, dropping the ``Extracted At`` column.
+
+    ``low_memory=False`` avoids a mixed-dtype warning on ``Extracted At``, which is
+    populated on the first row only and dropped immediately.
+    """
+    kwargs.setdefault("low_memory", False)
     frame = pd.read_csv(path, **kwargs)
     return frame.drop(columns=[c for c in frame.columns if c.strip() == "Extracted At"])
 
@@ -442,8 +448,30 @@ def clean_facility_scada(*, force: bool = False) -> CheckResult:
     )
 
 
+def parse_flexible_date(series: pd.Series) -> pd.Series:
+    """Parse a date column that AEMO publishes inconsistently across years.
+
+    The obligation-intervals files use ISO dates from 2024 onwards but day-first dates
+    in the 2023 file. Both are tried explicitly rather than inferred, because an
+    inferred parse would read 1 October as 10 January for the first twelve days of a
+    month.
+    """
+    text = series.astype("string").str.strip()
+    iso = pd.to_datetime(text, format="%Y-%m-%d", errors="coerce")
+    missing = iso.isna()
+    if missing.any():
+        iso.loc[missing] = pd.to_datetime(text[missing], format="%d/%m/%Y", errors="raise")
+    return iso
+
+
 def clean_esroi() -> tuple[pd.DataFrame, CheckResult]:
-    """Electric Storage Resource Obligation Intervals, one row per facility per day."""
+    """Electric Storage Resource Obligation Intervals, one row per obligation window.
+
+    The published schema changed within the study period: files up to 2025 give a single
+    market-wide window per trading day, while the 2026 file gives one row per
+    Separately Certified Component. Rows without a component are market-wide and apply
+    to every storage facility holding Capacity Credits.
+    """
     files = sorted((RAW / "electric-storage-resource-obligation-intervals").glob("*.csv"))
     if not files:
         raise FileNotFoundError("no files in data/raw/electric-storage-resource-obligation-intervals")
@@ -458,21 +486,30 @@ def clean_esroi() -> tuple[pd.DataFrame, CheckResult]:
             "ESROI Trading Interval End": "esroi_end",
         }
     )
-    frame["trading_date"] = pd.to_datetime(frame["trading_date"], format="%Y-%m-%d")
+    if "component" not in frame.columns:
+        frame["component"] = pd.NA
+
+    frame["trading_date"] = parse_flexible_date(frame["trading_date"])
 
     # The component code is the facility code with an ESR unit suffix, e.g.
-    # ALINTA_WGP_ESR1_ESR_01 -> ALINTA_WGP_ESR1.
-    frame["facility_code"] = frame["component"].str.replace(r"_ESR_\d+$", "", regex=True)
+    # ALINTA_WGP_ESR1_ESR_01 -> ALINTA_WGP_ESR1. A null component means the window is
+    # market-wide for that trading day.
+    frame["facility_code"] = (
+        frame["component"].astype("string").str.replace(r"_ESR_\d+$", "", regex=True)
+    )
+    frame["market_wide"] = frame["component"].isna()
 
-    start = pd.to_timedelta(frame["esroi_start"] + ":00")
-    end = pd.to_timedelta(frame["esroi_end"] + ":00")
+    start = pd.to_timedelta(frame["esroi_start"].astype("string").str.strip() + ":00")
+    end = pd.to_timedelta(frame["esroi_end"].astype("string").str.strip() + ":00")
     frame["esroi_start_dt"] = frame["trading_date"] + start
     frame["esroi_end_dt"] = frame["trading_date"] + end
 
     # The published end time is the start of the final obligation interval, so the
-    # window spans ((end - start) / 30 min) + 1 Trading Intervals.
+    # window spans ((end - start) / 30 min) + 1 Trading Intervals. The ESR Obligation
+    # Duration is eight Trading Intervals throughout the study period
+    # (docs/assumptions.md C2, D2), which this count is checked against below.
     frame["n_trading_intervals"] = ((end - start) / pd.Timedelta(minutes=30)).astype(int) + 1
-    frame = frame.sort_values(["trading_date", "facility_code"], ignore_index=True)
+    frame = frame.sort_values(["trading_date", "component"], ignore_index=True)
 
     result = CheckResult(name="esroi", rows=len(frame))
     result.first_interval = frame["esroi_start_dt"].min()
@@ -487,7 +524,17 @@ def clean_esroi() -> tuple[pd.DataFrame, CheckResult]:
         "obligation window length in Trading Intervals: "
         + ", ".join(f"{k}:{v:,}" for k, v in counts.items())
     )
-    result.notes.append(f"facilities: {frame['facility_code'].nunique()}")
+    windows = (
+        frame.groupby("capacity_year", observed=True)[["esroi_start", "esroi_end"]]
+        .agg(lambda s: s.mode().iat[0])
+        .apply(lambda r: f"{r['esroi_start']}-{r['esroi_end']}", axis=1)
+    )
+    result.notes.append("window by capacity year: " + ", ".join(f"{k} {v}" for k, v in windows.items()))
+    result.notes.append(
+        f"market-wide rows: {int(frame['market_wide'].sum()):,}; "
+        f"per-component rows: {int((~frame['market_wide']).sum()):,} "
+        f"covering {frame['facility_code'].nunique()} facilities"
+    )
     return frame, result
 
 
@@ -585,17 +632,64 @@ def clean_capacity_credits() -> tuple[pd.DataFrame, CheckResult]:
     return long, result
 
 
+#: Price type labels changed with the Reserve Capacity Reform: the floating price a new
+#: merchant entrant would receive was "Reserve Capacity" up to the 2026 capacity year
+#: and "Peak Reserve Capacity" from 2027. Both map to one canonical label so the
+#: economics stage does not have to know when the rename happened.
+RCP_TYPE_ALIASES = {
+    "reserve capacity": "Reserve Capacity",
+    "peak reserve capacity": "Reserve Capacity",
+}
+
+
 def clean_reserve_capacity_prices() -> tuple[pd.DataFrame, CheckResult]:
-    """Reserve Capacity Price per capacity year."""
+    """Reserve Capacity Price per capacity year, one file per year.
+
+    The published schema drifts: the 2028 file omits the Capacity Credits column and
+    the price-type labels were renamed from 2027. Only the capacity year, price type and
+    price are taken, which are present and unambiguous in every file.
+    """
     files = sorted((RAW / "reserve-capacity-prices").glob("*.csv"))
     if not files:
         raise FileNotFoundError("no files in data/raw/reserve-capacity-prices")
 
-    frame = read_aemo_csv(files[-1])
-    frame.columns = [c.strip().lower().replace(" ", "_") for c in frame.columns]
+    frames = []
+    for path in files:
+        raw = read_aemo_csv(path)
+        raw.columns = [c.strip().lower().replace(" ", "_") for c in raw.columns]
+        price_column = next(c for c in raw.columns if c.startswith("price_("))
+        part = raw[["capacity_year", "price_type", price_column]].rename(
+            columns={price_column: "price_per_mw_year"}
+        )
+        part["source_file"] = path.name
+        frames.append(part)
+
+    frame = pd.concat(frames, ignore_index=True)
+    frame["capacity_year"] = frame["capacity_year"].astype(int)
+    frame["price_type"] = frame["price_type"].astype("string").str.strip().str.strip('"')
+    frame["price_per_mw_year"] = pd.to_numeric(frame["price_per_mw_year"], errors="coerce")
+    frame["price_type_canonical"] = (
+        frame["price_type"].str.lower().map(RCP_TYPE_ALIASES).fillna(frame["price_type"])
+    )
+    frame = frame.dropna(subset=["price_per_mw_year"]).sort_values(
+        ["capacity_year", "price_type"], ignore_index=True
+    )
+
     result = CheckResult(name="reserve_capacity_prices", rows=len(frame))
-    result.notes.append(f"source file: {files[-1].name}")
-    result.notes.append(f"columns: {list(frame.columns)}")
+    result.duplicate_keys = int(frame.duplicated(subset=["capacity_year", "price_type"]).sum())
+    if result.duplicate_keys:
+        raise ValueError("reserve_capacity_prices: duplicate (capacity_year, price_type) rows")
+
+    headline = frame.loc[frame["price_type_canonical"] == "Reserve Capacity"]
+    result.notes.append(f"{len(files)} source file(s), capacity years {frame['capacity_year'].min()}"
+                        f" to {frame['capacity_year'].max()}")
+    result.notes.append(
+        "Reserve Capacity Price $/MW-year: "
+        + ", ".join(
+            f"{int(r.capacity_year)}={r.price_per_mw_year:,.0f}"
+            for r in headline.itertuples()
+        )
+    )
     return frame, result
 
 
@@ -630,6 +724,18 @@ def clean_market_requirements() -> tuple[pd.DataFrame, CheckResult]:
 # --------------------------------------------------------------------------------------
 # SCADA unit diagnosis
 # --------------------------------------------------------------------------------------
+
+
+#: Confirmed by ``scripts/diagnose_scada_unit.py``: SCADA ``Average MWh`` is MWh per
+#: five-minute interval, so power in MW is the column times twelve
+#: (docs/assumptions.md D5).
+SCADA_MWH_PER_INTERVAL = True
+SCADA_MW_PER_MWH = 1.0 / DT_HOURS
+
+
+def scada_mw(average_mwh: pd.Series) -> pd.Series:
+    """Convert the SCADA energy column to MW."""
+    return average_mwh * SCADA_MW_PER_MWH
 
 
 def diagnose_scada_unit(sample_months: int = 3, top_n: int = 12) -> pd.DataFrame:

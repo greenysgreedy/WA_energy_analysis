@@ -90,6 +90,37 @@ DOCUMENTS: tuple[ReferenceDoc, ...] = (
         filename="wem_settlement_formulation_v081.pdf",
         note="Independently certified settlement equations, including loss factor application.",
     ),
+    # Annual loss factor reports. These are the only published source of per-facility
+    # Transmission Loss Factors; the AEMO loss-factors index page rejects automated
+    # requests, so the per-year media URLs are listed explicitly.
+    ReferenceDoc(
+        key="loss_factors_2023_24",
+        title="WEM Loss Factor Report 2023/24",
+        url="https://www.aemo.com.au/-/media/files/electricity/wem/data/loss-factors/2024/2023-24-loss-factor-report.pdf",
+        filename="loss_factor_report_2023-24.pdf",
+        note="Transmission and distribution loss factors effective 1 July 2023.",
+    ),
+    ReferenceDoc(
+        key="loss_factors_2024_25",
+        title="WEM Loss Factor Report 2024/25",
+        url="https://www.aemo.com.au/-/media/files/electricity/wem/data/loss-factors/2025/2024-25-loss-factor-report.pdf",
+        filename="loss_factor_report_2024-25.pdf",
+        note="Transmission and distribution loss factors effective 1 July 2024.",
+    ),
+    ReferenceDoc(
+        key="loss_factors_2025_26",
+        title="WEM Loss Factor Report 2025/26",
+        url="https://www.aemo.com.au/-/media/files/electricity/wem/data/loss-factors/2026/2025-26-loss-factor-report.pdf",
+        filename="loss_factor_report_2025-26.pdf",
+        note="Transmission and distribution loss factors effective 1 July 2025.",
+    ),
+    ReferenceDoc(
+        key="loss_factors_2026_27",
+        title="WEM Loss Factor Report 2026/27",
+        url="https://www.aemo.com.au/-/media/files/electricity/wem/data/loss-factors/2027/2026-27-loss-factor-report.pdf",
+        filename="loss_factor_report_2026-27.pdf",
+        note="Transmission and distribution loss factors effective 1 July 2026.",
+    ),
     ReferenceDoc(
         key="market_design_summary",
         title="WEM Reform Market Design Summary, September 2023",
