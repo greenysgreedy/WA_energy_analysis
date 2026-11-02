@@ -84,6 +84,19 @@ def build() -> pd.DataFrame:
 
     per_interval = pd.DataFrame(frames).groupby(["interval_start", "trading_date"], as_index=False).sum()
 
+    # Reindex onto the full five-minute grid. Before the fleet existed there are no
+    # storage rows at all in the market schedule, and in the early months there are
+    # intervals with none; without this those intervals would be missing rather than
+    # zero, and every day containing one would be silently dropped downstream.
+    grid = (
+        data.load_prices()[["interval_start", "trading_date"]]
+        .drop_duplicates()
+        .sort_values("interval_start")
+    )
+    per_interval = grid.merge(per_interval, on=["interval_start", "trading_date"], how="left")
+    value_columns = [c for c in per_interval.columns if c.endswith("_mw")]
+    per_interval[value_columns] = per_interval[value_columns].fillna(0.0)
+
     for service in SERVICES:
         active = per_interval[f"{service}_active_accredited_mw"]
         enabled = per_interval[f"{service}_enabled_mw"]

@@ -243,15 +243,20 @@ def _load_partitioned(
     if not parts:
         raise FileNotFoundError(f"no parquet parts in {directory}")
 
+    # Push the filters down into the parquet reader. These tables hold 23 to 28 million
+    # rows across 38 monthly parts, and the backcast reads one facility at a time, so
+    # filtering after loading would scan the whole dataset nine times over.
+    predicate = []
+    if facilities is not None:
+        predicate.append(("facility_code", "in", list(facilities)))
+    if start is not None:
+        predicate.append(("trading_date", ">=", pd.Timestamp(start)))
+    if end is not None:
+        predicate.append(("trading_date", "<=", pd.Timestamp(end)))
+
     frames = []
     for part in parts:
-        frame = pd.read_parquet(part, columns=columns)
-        if facilities is not None:
-            frame = frame.loc[frame["facility_code"].isin(facilities)]
-        if start is not None:
-            frame = frame.loc[frame["trading_date"] >= pd.Timestamp(start)]
-        if end is not None:
-            frame = frame.loc[frame["trading_date"] <= pd.Timestamp(end)]
+        frame = pd.read_parquet(part, columns=columns, filters=predicate or None)
         if not frame.empty:
             frames.append(frame)
 

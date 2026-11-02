@@ -122,6 +122,13 @@ DOCUMENTS: tuple[ReferenceDoc, ...] = (
         note="Transmission and distribution loss factors effective 1 July 2026.",
     ),
     ReferenceDoc(
+        key="gencost_2025_26",
+        title="CSIRO GenCost 2025-26 Final Report",
+        url="https://www.csiro.au/-/media/Energy/GenCost-2025-26-Final/GenCost_2025-26_Final_Report_20260715.pdf",
+        filename="gencost_2025-26_final.pdf",
+        note="Capital and operating cost estimates for battery storage, used in the economics stage.",
+    ),
+    ReferenceDoc(
         key="market_design_summary",
         title="WEM Reform Market Design Summary, September 2023",
         url="https://www.aemo.com.au/-/media/files/initiatives/wem-reform-program/wem-reform-market-design-summary.pdf",

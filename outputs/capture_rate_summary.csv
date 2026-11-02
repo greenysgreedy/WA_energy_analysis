@@ -1,0 +1,9 @@
+,,$/MW-year,$/MW-year,$/MW-year,$/MW-year,capture_rate,capture_rate,capture_rate,capture_rate
+strategy,,last_week,perfect_foresight,persistence,yesterday,last_week,perfect_foresight,persistence,yesterday
+year,case,,,,,,,,
+2024,1h_merchant,84580.845,270831.495,55797.766,98679.537,0.312,1.0,0.206,0.364
+2024,2h_merchant,144199.107,362415.833,55599.15,162005.965,0.398,1.0,0.153,0.447
+2024,4h_merchant,232887.206,453511.509,56334.774,252833.518,0.514,1.0,0.124,0.558
+2025,1h_merchant,31415.406,87354.997,27190.931,34696.245,0.36,1.0,0.311,0.397
+2025,2h_merchant,47176.666,117551.012,27168.693,53546.583,0.401,1.0,0.231,0.456
+2025,4h_merchant,72164.649,150935.908,27190.027,81466.447,0.478,1.0,0.18,0.54

@@ -58,6 +58,16 @@ LOWER_IDX = tuple(SERVICES.index(s) for s in LOWER_SERVICES)
 N_SERVICES = len(SERVICES)
 
 
+class InfeasibleDispatch(RuntimeError):
+    """The dispatch LP had no feasible solution.
+
+    In a rolling-horizon run this is reachable without a modelling error: a battery can
+    carry forward a state of charge too low to meet an obligation window that opens
+    inside the horizon. The strategy catches it, records the breach and relaxes the
+    obligation for that solve rather than silently failing.
+    """
+
+
 @dataclass(frozen=True)
 class BatteryParams:
     """Every parameter of the battery and its market treatment. No magic numbers."""
@@ -296,6 +306,10 @@ class DispatchLP:
                 raise ValueError("fcess_cap must be non-negative")
         self.fcess_cap = fcess_cap
 
+        #: Obligation state-of-charge floor, kept separately from the live column bounds
+        #: because those also carry the pinned opening and closing values.
+        self._soc_floor = np.full(self.T + 1, params.soc_min_mwh)
+
         self._highspy = highspy
         self.h = highspy.Highs()
         self.h.setOptionValue("output_flag", False)
@@ -348,14 +362,57 @@ class DispatchLP:
         if p.cyclic_soc:
             lower[self.i_soc(self.T)] = upper[self.i_soc(self.T)] = p.soc_initial_mwh
 
-        # A battery under an ESR obligation may not charge inside the obligation window:
-        # it must be available to be dispatched at its accredited capacity throughout
-        # (docs/assumptions.md C4).
-        if p.has_capacity_credits and self.esroi_mask.any():
-            charge_upper = upper[self.i_ch(0) : self.i_ch(0) + self.T]
-            charge_upper[self.esroi_mask] = 0.0
+        # The ESR obligation is imposed entirely through column bounds rather than extra
+        # rows, so a rolling-horizon run can move the obligation window between solves
+        # with two bound updates instead of rebuilding the model.
+        self._apply_obligation(lower, upper)
 
         return lower, upper
+
+    def _obligation_soc_floor(self) -> np.ndarray:
+        """Lower bound on stored energy at each interval, given the obligation window.
+
+        A battery holding Capacity Credits must be able to discharge at its credited
+        capacity across the whole window (docs/assumptions.md C4), so when the window
+        opens it must already hold that much energy. The requirement is capped at the
+        usable range, so a published window longer than the obligation duration cannot
+        make the LP infeasible; in that case the strongest obligation the battery can
+        physically meet is to be full when the window opens.
+        """
+        p = self.params
+        floor = np.full(self.T + 1, p.soc_min_mwh)
+        if not (p.has_capacity_credits and self.esroi_mask.any()):
+            self._soc_floor = floor
+            return floor
+
+        usable = p.soc_max_mwh - p.soc_min_mwh
+        for start, length in _mask_runs(self.esroi_mask):
+            required = min(
+                p.accredited_capacity_mw * length * self.dt / p.efficiency_dis, usable
+            )
+            floor[start] = p.soc_min_mwh + required
+        self._soc_floor = floor
+        return floor
+
+    def _apply_obligation(self, lower: np.ndarray, upper: np.ndarray) -> None:
+        """Write the obligation into the charge upper bounds and state-of-charge floors."""
+        p = self.params
+        if not p.has_capacity_credits:
+            return
+
+        # No charging inside the window: the battery must be available to inject.
+        charge = upper[self.i_ch(0) : self.i_ch(0) + self.T]
+        charge[self.esroi_mask] = 0.0
+
+        soc_start = self.i_soc(0)
+        lower[soc_start : soc_start + self.T + 1] = self._obligation_soc_floor()
+
+        # The pinned opening and closing states must still lie inside the floor.
+        opening = max(p.soc_initial_mwh, lower[self.i_soc(0)])
+        lower[self.i_soc(0)] = upper[self.i_soc(0)] = opening
+        if p.cyclic_soc:
+            closing = max(p.soc_initial_mwh, lower[self.i_soc(self.T)])
+            lower[self.i_soc(self.T)] = upper[self.i_soc(self.T)] = closing
 
     def _rows(self) -> tuple[list[float], list[float], list[list[tuple[int, float]]]]:
         """Constraint rows as ``(lower, upper, [(column, coefficient), ...])``."""
@@ -411,19 +468,6 @@ class DispatchLP:
                 terms.append((self.i_soc(t), 1.0))
                 add(-inf, p.soc_max_mwh, terms)
 
-        # ESR obligation: at the start of each obligation window the battery must hold
-        # enough energy to discharge at its accredited capacity for the whole window.
-        if p.has_capacity_credits and self.esroi_mask.any():
-            usable = p.soc_max_mwh - p.soc_min_mwh
-            for start, length in _mask_runs(self.esroi_mask):
-                # Stored energy needed to sustain the accredited sent-out capacity for
-                # the whole window. Capped at the usable range so a published window
-                # longer than the obligation duration cannot make the LP infeasible;
-                # when that happens the battery simply has to be full at the window
-                # start, which is the strongest obligation it can physically meet.
-                required = min(p.accredited_capacity_mw * length * self.dt / eta_dis, usable)
-                add(p.soc_min_mwh + required, inf, [(self.i_soc(start), 1.0)])
-
         return lower, upper, rows
 
     def _build(self) -> None:
@@ -450,6 +494,69 @@ class DispatchLP:
             np.array(values, dtype=np.double),
         )
         self._all_columns = np.arange(self.n_vars, dtype=np.int32)
+        self._charge_columns = np.arange(self.i_ch(0), self.i_ch(0) + self.T, dtype=np.int32)
+        self._soc_columns = np.arange(self.i_soc(0), self.i_soc(0) + self.T + 1, dtype=np.int32)
+        self._enable_columns = np.arange(
+            self.i_enable(0, 0), self.i_enable(N_SERVICES - 1, 0) + self.T, dtype=np.int32
+        )
+        self._col_lower = col_lower
+        self._col_upper = col_upper
+
+    # -- moving the window between solves ----------------------------------------------
+
+    def set_fcess_cap(self, fcess_cap: np.ndarray | None) -> None:
+        """Replace the per-interval enablement ceiling in place.
+
+        One bulk bound update rather than a rebuild, so a rolling-horizon run can step
+        the window forward cheaply.
+        """
+        p = self.params
+        ceilings = []
+        for s, service in enumerate(SERVICES):
+            ceiling = np.full(self.T, p.accredited_for(service))
+            if fcess_cap is not None:
+                ceiling = np.minimum(ceiling, np.asarray(fcess_cap, dtype=float)[s])
+            ceilings.append(ceiling)
+
+        upper = np.concatenate(ceilings)
+        lower = np.zeros_like(upper)
+        self.fcess_cap = fcess_cap
+        self._col_upper[self._enable_columns] = upper
+        self.h.changeColsBounds(len(self._enable_columns), self._enable_columns, lower, upper)
+
+    def set_esroi_mask(self, esroi_mask: np.ndarray | None) -> None:
+        """Replace the obligation window in place."""
+        p = self.params
+        self.esroi_mask = (
+            np.zeros(self.T, dtype=bool) if esroi_mask is None else np.asarray(esroi_mask, dtype=bool)
+        )
+        if self.esroi_mask.shape != (self.T,):
+            raise ValueError(f"esroi_mask must have shape ({self.T},)")
+
+        charge_upper = np.full(self.T, p.p_max_mw)
+        soc_lower = np.full(self.T + 1, p.soc_min_mwh)
+        soc_upper = np.full(self.T + 1, p.soc_max_mwh)
+        if p.has_capacity_credits:
+            charge_upper[self.esroi_mask] = 0.0
+            soc_lower = self._obligation_soc_floor()
+
+        self._col_upper[self._charge_columns] = charge_upper
+        self.h.changeColsBounds(
+            len(self._charge_columns), self._charge_columns, np.zeros(self.T), charge_upper
+        )
+        self._col_lower[self._soc_columns] = soc_lower
+        self._col_upper[self._soc_columns] = soc_upper
+        self.h.changeColsBounds(
+            len(self._soc_columns), self._soc_columns, soc_lower, soc_upper
+        )
+
+    def soc_floor_at(self, index: int) -> float:
+        """Obligation state-of-charge floor at an interval.
+
+        Read from the obligation floor rather than from the live column bounds, which
+        also carry the pinned opening and closing values.
+        """
+        return float(self._soc_floor[index])
 
     # -- solving -----------------------------------------------------------------------
 
@@ -502,19 +609,26 @@ class DispatchLP:
 
         self.h.changeColsCost(self.n_vars, self._all_columns, self._costs(energy_price, fcess_prices))
 
-        if soc_initial_mwh is not None:
-            self.h.changeColBounds(self.i_soc(0), soc_initial_mwh, soc_initial_mwh)
+        # The opening state of charge is pinned to its actual value, overriding any
+        # obligation floor at that index: the battery is where it is.
+        opening = self.params.soc_initial_mwh if soc_initial_mwh is None else soc_initial_mwh
+        if soc_initial_mwh is None:
+            opening = max(opening, self.soc_floor_at(0))
+        self.h.changeColBounds(self.i_soc(0), opening, opening)
+
         pin_end = self.params.cyclic_soc if cyclic is None else cyclic
-        end_value = self.params.soc_initial_mwh if soc_initial_mwh is None else soc_initial_mwh
         if pin_end:
-            self.h.changeColBounds(self.i_soc(self.T), end_value, end_value)
+            closing = max(opening, self.soc_floor_at(self.T))
+            self.h.changeColBounds(self.i_soc(self.T), closing, closing)
         else:
-            self.h.changeColBounds(self.i_soc(self.T), self.params.soc_min_mwh, self.params.soc_max_mwh)
+            self.h.changeColBounds(
+                self.i_soc(self.T), self.soc_floor_at(self.T), self.params.soc_max_mwh
+            )
 
         self.h.run()
         status = self.h.modelStatusToString(self.h.getModelStatus())
         if self.h.getModelStatus() != self._highspy.HighsModelStatus.kOptimal:
-            raise RuntimeError(f"dispatch LP did not solve to optimality: {status}")
+            raise InfeasibleDispatch(f"dispatch LP did not solve to optimality: {status}")
 
         x = np.array(self.h.getSolution().col_value, dtype=np.double)
         return self._result(x, status, energy_price, fcess_prices)

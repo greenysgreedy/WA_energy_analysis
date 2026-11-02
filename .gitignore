@@ -12,5 +12,7 @@ data/
 !data/reference/
 !data/reference/**
 
-# Model outputs are reproducible, but keep the small summary tables for the write-up
+# Keep the small summary tables that the write-up quotes; the large intermediate
+# parquet is reproducible from scripts/run_strategies.py
 !outputs/
+outputs/*.parquet
