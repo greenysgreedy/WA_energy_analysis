@@ -1,6 +1,16 @@
 __pycache__/
 .venv/
 .ipynb_checkpoints/
-data/
+.pytest_cache/
 .env
 .DS_Store
+
+# AEMO downloads and derived parquet are reproducible from src/download_data.py
+data/
+
+# Hand-curated reference tables are inputs, not outputs, so they are tracked
+!data/reference/
+!data/reference/**
+
+# Model outputs are reproducible, but keep the small summary tables for the write-up
+!outputs/

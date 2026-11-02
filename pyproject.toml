@@ -1,0 +1,17 @@
+[project]
+name = "wa-energy-analysis"
+version = "0.1.0"
+description = "Grid battery revenue in WA's SWIS since the WEM reform (1 October 2023)"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "slow: touches real data under data/; skipped unless --run-slow is passed",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
