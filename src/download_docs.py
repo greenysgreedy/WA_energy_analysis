@@ -121,6 +121,29 @@ DOCUMENTS: tuple[ReferenceDoc, ...] = (
         filename="loss_factor_report_2026-27.pdf",
         note="Transmission and distribution loss factors effective 1 July 2026.",
     ),
+    # AEMO Quarterly Energy Dynamics. Used only to reconcile modelled FCESS totals
+    # against published market costs, never as a rule source.
+    ReferenceDoc(
+        key="qed_2024_q4",
+        title="AEMO Quarterly Energy Dynamics, Q4 2024",
+        url="https://www.aemo.com.au/-/media/files/major-publications/qed/2024/qed-q4-2024.pdf",
+        filename="qed_2024_q4.pdf",
+        note="Published WEM Essential System Services costs for reconciliation.",
+    ),
+    ReferenceDoc(
+        key="qed_2025_q4",
+        title="AEMO Quarterly Energy Dynamics, Q4 2025",
+        url="https://www.aemo.com.au/-/media/files/major-publications/qed/2025/qed-q4-2025.pdf",
+        filename="qed_2025_q4.pdf",
+        note="Published WEM Essential System Services costs for reconciliation.",
+    ),
+    ReferenceDoc(
+        key="qed_2026_q3",
+        title="AEMO Quarterly Energy Dynamics, Q3 2026",
+        url="https://www.aemo.com.au/-/media/files/major-publications/qed/2026/qed-q3-2026.pdf",
+        filename="qed_2026_q3.pdf",
+        note="Published WEM Essential System Services costs for reconciliation.",
+    ),
     ReferenceDoc(
         key="gencost_2025_26",
         title="CSIRO GenCost 2025-26 Final Report",

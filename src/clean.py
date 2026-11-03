@@ -30,7 +30,6 @@ from pathlib import Path
 import pandas as pd
 
 from src.paths import (
-    DT_HOURS,
     INTERVALS_PER_DAY_5MIN,
     INTERVALS_PER_DAY_30MIN,
     PROCESSED,
@@ -54,10 +53,35 @@ FCESS_SERVICES = (
     "rocof",
 )
 
+# --------------------------------------------------------------------------------------
+# The contingency raise and lower columns are transposed at source
+# --------------------------------------------------------------------------------------
+#
+# In both `market-clearing-prices-csv` and `market-schedule-csv` the column headed
+# "Contingency Raise" carries contingency **lower** data, and vice versa. The columns in
+# `market-requirements-csv` are labelled correctly. Three independent checks establish
+# this; see scripts/check_service_mapping.py, which asserts it so it cannot regress:
+#
+# 1. Whole-market enablement in the column headed "Contingency Raise Schedule"
+#    correlates 1.000 with the contingency *lower* requirement and equals it to within
+#    0.1 MW (63.8 MW against 63.9 MW in 2024), while every other service enables to its
+#    own requirement exactly.
+# 2. AEMO confirms the requirement labels. QED Q4 2025 section 4.4 reports that average
+#    contingency lower requirements rose "61.3 MW (+113%)"; the column named
+#    contingency_lower_requirement rose from 54.4 to 115.5 MW, that is +61.1 MW, +112%.
+# 3. Per-service costs only match AEMO's published figures after swapping. QED Q4 2025
+#    section 4.5.2 gives Q4 2024 contingency raise at $20.2m and lower at about $6.5m;
+#    the relabelled series give $22.3m and $6.3m.
+#
+# The two files are transposed *consistently*, so price x quantity products are correct
+# and revenue totals are unaffected. Only the service attribution and, in the dispatch
+# model, which headroom constraint each service consumes, depend on getting this right.
+# Recorded as assumption D9 in docs/assumptions.md.
+
 PRICE_COLUMNS = {
     "Energy Clearing Price": "energy_price",
-    "Contingency Raise Clearing Price": "contingency_raise_price",
-    "Contingency Lower Clearing Price": "contingency_lower_price",
+    "Contingency Raise Clearing Price": "contingency_lower_price",  # transposed at source
+    "Contingency Lower Clearing Price": "contingency_raise_price",  # transposed at source
     "Regulation Raise Clearing Price": "regulation_raise_price",
     "Regulation Lower Clearing Price": "regulation_lower_price",
     "RoCoF Clearing Price": "rocof_price",
@@ -65,8 +89,8 @@ PRICE_COLUMNS = {
 
 SCHEDULE_COLUMNS = {
     "Energy Schedule": "energy_mw",
-    "Contingency Raise Schedule": "contingency_raise_mw",
-    "Contingency Lower Schedule": "contingency_lower_mw",
+    "Contingency Raise Schedule": "contingency_lower_mw",  # transposed at source
+    "Contingency Lower Schedule": "contingency_raise_mw",  # transposed at source
     "Regulation Raise Schedule": "regulation_raise_mw",
     "Regulation Lower Schedule": "regulation_lower_mw",
     "RoCoF Schedule": "rocof_mw",
@@ -724,18 +748,6 @@ def clean_market_requirements() -> tuple[pd.DataFrame, CheckResult]:
 # --------------------------------------------------------------------------------------
 # SCADA unit diagnosis
 # --------------------------------------------------------------------------------------
-
-
-#: Confirmed by ``scripts/diagnose_scada_unit.py``: SCADA ``Average MWh`` is MWh per
-#: five-minute interval, so power in MW is the column times twelve
-#: (docs/assumptions.md D5).
-SCADA_MWH_PER_INTERVAL = True
-SCADA_MW_PER_MWH = 1.0 / DT_HOURS
-
-
-def scada_mw(average_mwh: pd.Series) -> pd.Series:
-    """Convert the SCADA energy column to MW."""
-    return average_mwh * SCADA_MW_PER_MWH
 
 
 def diagnose_scada_unit(sample_months: int = 3, top_n: int = 12) -> pd.DataFrame:

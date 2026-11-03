@@ -145,6 +145,60 @@ def entrant_caps(dates, accredited_mw: dict[str, float], *, scale: float = 1.0) 
     return np.minimum(utilisation * own, own)
 
 
+MARKET_COST_PATH = PROCESSED / "fcess_market_cost.parquet"
+
+
+def build_market_cost() -> pd.DataFrame:
+    """Whole-market FCESS enablement cost per trading day, from schedules and prices.
+
+    This is the strongest validation available in the project, because it does not
+    depend on anything about storage: it multiplies **every** facility's enablement
+    quantity by the clearing price and sums. AEMO publishes the same total each quarter,
+    so the two can be compared directly, and agreement means the enablement and price
+    series are both being read correctly.
+    """
+    from src.paths import DT_HOURS
+
+    prices = data.load_prices()[["interval_start", "trading_date", *data.FCESS_PRICE_COLUMNS]]
+    parts = sorted((PROCESSED / "market_schedule").glob("*.parquet"))
+    if not parts:
+        raise FileNotFoundError("clean market_schedule first")
+
+    frames = []
+    for part in parts:
+        schedule = pd.read_parquet(
+            part, columns=["interval_start", *data.FCESS_SCHEDULE_COLUMNS]
+        )
+        schedule[list(data.FCESS_SCHEDULE_COLUMNS)] = schedule[
+            list(data.FCESS_SCHEDULE_COLUMNS)
+        ].fillna(0.0)
+        totals = schedule.groupby("interval_start", as_index=False).sum()
+        frames.append(totals)
+
+    enabled = pd.concat(frames, ignore_index=True)
+    merged = enabled.merge(prices, on="interval_start", how="inner")
+
+    for service in SERVICES:
+        merged[f"{service}_cost"] = (
+            merged[f"{service}_mw"] * merged[f"{service}_price"].fillna(0.0) * DT_HOURS
+        )
+
+    cost_columns = [f"{service}_cost" for service in SERVICES]
+    daily = merged.groupby("trading_date", observed=True)[cost_columns].sum()
+    daily["total_cost"] = daily.sum(axis=1)
+
+    PROCESSED.mkdir(parents=True, exist_ok=True)
+    daily.reset_index().to_parquet(MARKET_COST_PATH, index=False, compression="zstd")
+    return daily
+
+
+@lru_cache(maxsize=1)
+def load_market_cost() -> pd.DataFrame:
+    if not MARKET_COST_PATH.exists():
+        return build_market_cost()
+    return pd.read_parquet(MARKET_COST_PATH).set_index("trading_date")
+
+
 def summary() -> pd.DataFrame:
     """Fleet enablement, active accreditation and utilisation by year."""
     fleet = load().copy()
@@ -167,6 +221,10 @@ def main() -> int:
 
     frame = build() if args.build or not OUT_PATH.exists() else load()
     print(f"{len(frame):,} intervals written to {OUT_PATH}\n")
+
+    if args.build or not MARKET_COST_PATH.exists():
+        cost = build_market_cost()
+        print(f"{len(cost):,} trading days written to {MARKET_COST_PATH}\n")
 
     table = summary()
     utilisation = table[[c for c in table.columns if c.endswith("utilisation")]]

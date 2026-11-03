@@ -30,7 +30,7 @@ Why HiGHS directly rather than Pyomo or cvxpy: see ``docs/assumptions.md`` M1.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -742,8 +742,3 @@ def settle(
         "discharge_mwh": float(p_dis.sum() * dt),
         "charge_mwh": float(p_ch.sum() * dt),
     }
-
-
-def with_duration(params: BatteryParams, duration_h: float) -> BatteryParams:
-    """Copy of ``params`` with a different duration. Keeps the headline cases readable."""
-    return replace(params, duration_h=duration_h)

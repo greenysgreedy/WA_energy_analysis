@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import argparse
 import re
+from functools import lru_cache
 
+import numpy as np
 import pandas as pd
 
 from src.download_docs import DOCS_DIR
@@ -177,11 +179,14 @@ def build() -> pd.DataFrame:
     return frame
 
 
+@lru_cache(maxsize=1)
 def load() -> pd.DataFrame:
-    """Read the built loss factor table."""
+    """Read the built loss factor table, cached."""
     if not OUT_PATH.exists():
         return build()
-    return pd.read_csv(OUT_PATH)
+    table = pd.read_csv(OUT_PATH)
+    table["applies_from"] = pd.to_datetime(table["applies_from"])
+    return table.sort_values(["facility_code", "applies_from"], ignore_index=True)
 
 
 def loss_factor_for(facility_code: str, trading_date) -> float:
@@ -190,15 +195,34 @@ def loss_factor_for(facility_code: str, trading_date) -> float:
     Falls back to 1.0 for facilities with no entry, which is the neutral assumption
     recorded as L4 in ``docs/assumptions.md``.
     """
-    table = load()
-    rows = table.loc[table["facility_code"] == facility_code].copy()
+    rows = load()
+    rows = rows.loc[rows["facility_code"] == facility_code]
     if rows.empty:
         return 1.0
-    rows["applies_from"] = pd.to_datetime(rows["applies_from"])
     applicable = rows.loc[rows["applies_from"] <= pd.Timestamp(trading_date)]
     if applicable.empty:
-        return float(rows.sort_values("applies_from").iloc[0]["loss_factor"])
-    return float(applicable.sort_values("applies_from").iloc[-1]["loss_factor"])
+        return float(rows.iloc[0]["loss_factor"])
+    return float(applicable.iloc[-1]["loss_factor"])
+
+
+def loss_factor_series(facility_code: str, trading_dates: pd.Series) -> pd.Series:
+    """Loss factor for each trading date, as a vectorised step lookup.
+
+    The per-date scalar lookup is far too slow for a three-year five-minute series, so
+    the backcast uses this instead.
+    """
+    rows = load()
+    rows = rows.loc[rows["facility_code"] == facility_code]
+    dates = pd.to_datetime(pd.Series(trading_dates).reset_index(drop=True))
+    if rows.empty:
+        return pd.Series(np.ones(len(dates)), index=dates.index)
+
+    boundaries = rows["applies_from"].to_numpy()
+    values = rows["loss_factor"].to_numpy(dtype=float)
+    # Index of the last boundary at or before each date; -1 means before the first.
+    position = np.searchsorted(boundaries, dates.to_numpy(), side="right") - 1
+    position = np.clip(position, 0, len(values) - 1)
+    return pd.Series(values[position], index=dates.index)
 
 
 def main() -> int:

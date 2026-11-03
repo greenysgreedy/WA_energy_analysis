@@ -54,6 +54,16 @@ class FacilityRevenue:
     duration_estimate_h: float
     duration_source: str
 
+    #: Diagnostics behind the duration estimate, filled in by :func:`rebuild_facility`.
+    observed_peak_mw: float = 0.0
+    usable_mwh_from_scada: float = 0.0
+    usable_mwh_from_credits: float | None = None
+
+    @property
+    def rating_mw(self) -> float:
+        """Power rating used for normalisation: the observed peak where there is one."""
+        return self.observed_peak_mw or self.registered_mw
+
     def restricted(self) -> pd.DataFrame:
         """Daily rows from the first full operating month onwards."""
         if self.first_full_month is None:
@@ -97,17 +107,32 @@ def estimate_usable_energy(scada: pd.Series, quantile: float = 0.98) -> float:
 
 
 def duration_from_capacity_credits(
-    facility_code: str, capacity_year: str, efficiency_dis: float = 0.938
+    facility_code: str,
+    capacity_year: str | None = None,
+    efficiency_dis: float = 0.938,
+    *,
+    obligation_hours: float = 4.0,
 ) -> float | None:
-    """Usable energy implied by the Capacity Credits held.
+    """Usable energy implied by the Capacity Credits held, in MWh.
 
-    Inverts assumption C1: credits are the sent-out capacity sustainable over the
-    four-hour ESR Obligation Duration, so usable energy is credits x 4 / efficiency.
+    Inverts assumption C1: credits are the sent-out capacity the facility can sustain
+    over the four-hour ESR Obligation Duration, so usable energy is
+    ``credits x 4 / efficiency``. When no capacity year is named, the largest allocation
+    the facility has ever held is used, because credits are assigned against demonstrated
+    capability and a facility part way through commissioning holds fewer.
     """
     credits = data.capacity_credits_for(facility_code)
-    if capacity_year not in credits.index:
+    if credits.empty:
         return None
-    return float(credits.loc[capacity_year]) * 4.0 / efficiency_dis
+    if capacity_year is not None:
+        if capacity_year not in credits.index:
+            return None
+        quantity = float(credits.loc[capacity_year])
+    else:
+        quantity = float(credits.max())
+    if quantity <= 0:
+        return None
+    return quantity * obligation_hours / efficiency_dis
 
 
 # --------------------------------------------------------------------------------------
@@ -153,9 +178,9 @@ def rebuild_facility(
     ].fillna(0.0)
 
     # Loss factors change by financial year, so they are applied per trading day.
-    merged["loss_factor"] = [
-        loss_factors.loss_factor_for(facility_code, day) for day in merged["trading_date"]
-    ]
+    merged["loss_factor"] = loss_factors.loss_factor_series(
+        facility_code, merged["trading_date"]
+    ).to_numpy()
 
     # Energy settles on the Trading Interval net quantity at the Reference Trading Price.
     by_interval = merged.groupby(["trading_date", "trading_interval"], observed=True).agg(
@@ -175,24 +200,44 @@ def rebuild_facility(
         )
         fcess_daily[f"fcess_{service}"] = payment.groupby(merged["trading_date"]).sum()
 
-    throughput = merged.groupby("trading_date", observed=True)["average_mwh"].agg(
-        discharge_mwh=lambda s: float(s[s > 0].sum()),
-        charge_mwh=lambda s: float(-s[s < 0].sum()),
-        peak_mw=lambda s: float(s.max() / DT_HOURS),
+    # Split discharge from charge with vectorised columns rather than per-group lambdas:
+    # the series runs to hundreds of thousands of intervals per facility.
+    merged["discharge_mwh"] = merged["average_mwh"].clip(lower=0.0)
+    merged["charge_mwh"] = -merged["average_mwh"].clip(upper=0.0)
+    throughput = merged.groupby("trading_date", observed=True).agg(
+        discharge_mwh=("discharge_mwh", "sum"),
+        charge_mwh=("charge_mwh", "sum"),
+        peak_mw=("average_mwh", "max"),
     )
+    throughput["peak_mw"] = throughput["peak_mw"] / DT_HOURS
 
     daily = pd.concat([energy_daily, pd.DataFrame(fcess_daily), throughput], axis=1)
     daily["fcess_revenue"] = daily[[f"fcess_{s}" for s in SERVICES]].sum(axis=1)
     daily["total_revenue"] = daily["energy_revenue"] + daily["fcess_revenue"]
     daily["throughput_mwh"] = daily["discharge_mwh"] + daily["charge_mwh"]
 
-    usable = estimate_usable_energy(merged.set_index("interval_start")["average_mwh"])
-    duration = usable / registered_mw if registered_mw else 0.0
-    source = "SCADA discharge runs"
+    observed_peak_mw = float(daily["peak_mw"].max()) if not daily.empty else 0.0
+    from_scada = estimate_usable_energy(merged.set_index("interval_start")["average_mwh"])
+    from_credits = duration_from_capacity_credits(facility_code)
 
-    first_full = first_full_operating_month(daily, usable)
+    # The SCADA estimate is a lower bound: a battery is not obliged to discharge fully
+    # in one unbroken run, and in practice it rarely does. The Capacity Credit figure
+    # inverts an accreditation AEMO granted against the facility's demonstrated
+    # performance, so it is preferred where it exists, with the SCADA figure kept as a
+    # cross-check (docs/assumptions.md D4).
+    if from_credits and from_credits >= from_scada:
+        usable, source = from_credits, "inverted from Capacity Credits"
+    else:
+        usable, source = from_scada, "SCADA discharge runs (lower bound)"
 
-    return FacilityRevenue(
+    # Registered MW in the standing data is a connection-point figure and can exceed
+    # what the facility ever injects, so the observed peak is used for the duration.
+    rating = observed_peak_mw or registered_mw
+    duration = usable / rating if rating else 0.0
+
+    first_full = first_full_operating_month(daily, from_scada)
+
+    result = FacilityRevenue(
         facility_code=facility_code,
         daily=daily,
         registered_mw=registered_mw,
@@ -201,6 +246,10 @@ def rebuild_facility(
         duration_estimate_h=duration,
         duration_source=source,
     )
+    result.observed_peak_mw = observed_peak_mw
+    result.usable_mwh_from_scada = from_scada
+    result.usable_mwh_from_credits = from_credits
+    return result
 
 
 def first_full_operating_month(daily: pd.DataFrame, usable_mwh: float) -> pd.Period | None:
@@ -278,21 +327,23 @@ def fleet_summary(fleet: dict[str, FacilityRevenue]) -> pd.DataFrame:
             {
                 "facility_code": code,
                 "registered_mw": result.registered_mw,
+                "observed_peak_mw": result.observed_peak_mw,
                 "usable_mwh": result.usable_mwh_estimate,
                 "duration_h": result.duration_estimate_h,
+                "duration_source": result.duration_source,
                 "first_full_month": str(result.first_full_month),
                 "days": len(window),
                 "discharge_mwh": window["discharge_mwh"].sum(),
                 "charge_mwh": window["charge_mwh"].sum(),
-                "cycles": (
-                    window["throughput_mwh"].sum() / (2 * result.usable_mwh_estimate)
+                "cycles_per_year": (
+                    window["throughput_mwh"].sum() / (2 * result.usable_mwh_estimate) / years
                     if result.usable_mwh_estimate
                     else np.nan
                 ),
                 "energy_revenue": window["energy_revenue"].sum(),
                 "fcess_revenue": window["fcess_revenue"].sum(),
                 "total_revenue": window["total_revenue"].sum(),
-                "revenue_per_mw_year": window["total_revenue"].sum() / result.registered_mw / years,
+                "revenue_per_mw_year": window["total_revenue"].sum() / result.rating_mw / years,
                 "revenue_per_mwh_year": (
                     window["total_revenue"].sum() / result.usable_mwh_estimate / years
                     if result.usable_mwh_estimate
