@@ -5,12 +5,16 @@ __pycache__/
 .env
 .DS_Store
 
-# AEMO downloads and derived parquet are reproducible from src/download_data.py
-data/
+# AEMO downloads and derived parquet are reproducible from src/download_data.py.
+# Negations have to be written against data/* rather than data/, because git does not
+# descend into an ignored directory and a later "!" would never be reached.
+data/*
 
-# Hand-curated reference tables are inputs, not outputs, so they are tracked
+# The curated loss factor table is a cited input rather than an output: rebuilding it
+# needs the annual Loss Factor Report PDFs, which are not tracked.
 !data/reference/
-!data/reference/**
+data/reference/*
+!data/reference/loss_factors.csv
 
 # Keep the small summary tables that the write-up quotes; the large intermediate
 # parquet is reproducible from scripts/run_strategies.py

@@ -1,0 +1,37 @@
+facility_code,financial_year,applies_from,tlf_code,description,loss_factor,exact_match,source_report,note
+ALINTA_WGP_ESR1,2023-24,2023-10-01,WWGP,Wagerup,0.9644,False,loss_factor_report_2023-24.pdf,no dedicated code this year; using nearest site code WWGP
+ALINTA_WGP_ESR1,2024-25,2024-07-01,WWGP,Wagerup,0.9871,False,loss_factor_report_2024-25.pdf,no dedicated code this year; using nearest site code WWGP
+ALINTA_WGP_ESR1,2025-26,2025-07-01,WWGP,Wagerup,0.9559,False,loss_factor_report_2025-26.pdf,no dedicated code this year; using nearest site code WWGP
+ALINTA_WGP_ESR1,2026-27,2026-07-01,WWGU,Wagerup Battery,0.9593,True,loss_factor_report_2026-27.pdf,
+COLLIE_BESS2,2023-24,2023-10-01,WCPS,Collie PWS,0.9698,False,loss_factor_report_2023-24.pdf,no dedicated code this year; using nearest site code WCPS
+COLLIE_BESS2,2024-25,2024-07-01,WCBS,Collie BESS 1,0.9719,False,loss_factor_report_2024-25.pdf,no dedicated code this year; using nearest site code WCBS
+COLLIE_BESS2,2025-26,2025-07-01,WCBS,Collie BESS 1,0.9873,False,loss_factor_report_2025-26.pdf,no dedicated code this year; using nearest site code WCBS
+COLLIE_BESS2,2026-27,2026-07-01,WCBT,Neoen Collie Stage 2 BESS,0.9901,True,loss_factor_report_2026-27.pdf,
+COLLIE_ESR1,2023-24,2023-10-01,WCPS,Collie PWS,0.9698,False,loss_factor_report_2023-24.pdf,no dedicated code this year; using nearest site code WCPS
+COLLIE_ESR1,2024-25,2024-07-01,WCBS,Collie BESS 1,0.9719,True,loss_factor_report_2024-25.pdf,
+COLLIE_ESR1,2025-26,2025-07-01,WCBS,Collie BESS 1,0.9873,True,loss_factor_report_2025-26.pdf,
+COLLIE_ESR1,2026-27,2026-07-01,WCBS,Collie BESS 1,1.0006,True,loss_factor_report_2026-27.pdf,
+COLLIE_ESR4,2023-24,2023-10-01,WCPS,Collie PWS,0.9698,False,loss_factor_report_2023-24.pdf,no dedicated code this year; using nearest site code WCPS
+COLLIE_ESR4,2024-25,2024-07-01,WCPS,Collie PWS,0.9719,False,loss_factor_report_2024-25.pdf,no dedicated code this year; using nearest site code WCPS
+COLLIE_ESR4,2025-26,2025-07-01,WCPS,Collie PWS,0.9732,False,loss_factor_report_2025-26.pdf,no dedicated code this year; using nearest site code WCPS
+COLLIE_ESR4,2026-27,2026-07-01,WCBD,Collie ESR4,1.0006,True,loss_factor_report_2026-27.pdf,
+COLLIE_ESR5,2023-24,2023-10-01,WCPS,Collie PWS,0.9698,False,loss_factor_report_2023-24.pdf,no dedicated code this year; using nearest site code WCPS
+COLLIE_ESR5,2024-25,2024-07-01,WCPS,Collie PWS,0.9719,False,loss_factor_report_2024-25.pdf,no dedicated code this year; using nearest site code WCPS
+COLLIE_ESR5,2025-26,2025-07-01,WCPS,Collie PWS,0.9732,False,loss_factor_report_2025-26.pdf,no dedicated code this year; using nearest site code WCPS
+COLLIE_ESR5,2026-27,2026-07-01,WCBE,Collie ESR5,1.0006,True,loss_factor_report_2026-27.pdf,
+KWINANA_ESR1,2023-24,2023-10-01,WKBS,Kwinana Battery Energy Storage System,0.9918,True,loss_factor_report_2023-24.pdf,
+KWINANA_ESR1,2024-25,2024-07-01,WKBS,Kwinana Battery Energy Storage System,0.9983,True,loss_factor_report_2024-25.pdf,
+KWINANA_ESR1,2025-26,2025-07-01,WKBS,Kwinana Battery Energy Storage System,0.9968,True,loss_factor_report_2025-26.pdf,
+KWINANA_ESR1,2026-27,2026-07-01,WKBS,Kwinana Battery Energy Storage System,1.0004,True,loss_factor_report_2026-27.pdf,
+KWINANA_ESR2,2023-24,2023-10-01,WKBS,Kwinana Battery Energy Storage System,0.9918,False,loss_factor_report_2023-24.pdf,no dedicated code this year; using nearest site code WKBS
+KWINANA_ESR2,2024-25,2024-07-01,WKBS,Kwinana Battery Energy Storage System,0.9983,False,loss_factor_report_2024-25.pdf,no dedicated code this year; using nearest site code WKBS
+KWINANA_ESR2,2025-26,2025-07-01,WKBT,Kwinana BESS 2 (KBESS2),0.9978,True,loss_factor_report_2025-26.pdf,
+KWINANA_ESR2,2026-27,2026-07-01,WKBT,Kwinana BESS 2 (KBESS2),1.001,True,loss_factor_report_2026-27.pdf,
+MERREDIN_ESR1,2023-24,2023-10-01,WMER,Merredin,1.0337,True,loss_factor_report_2023-24.pdf,
+MERREDIN_ESR1,2024-25,2024-07-01,WMER,Merredin,1.0641,True,loss_factor_report_2024-25.pdf,
+MERREDIN_ESR1,2025-26,2025-07-01,WMER,Merredin,1.039,True,loss_factor_report_2025-26.pdf,
+MERREDIN_ESR1,2026-27,2026-07-01,WMER,Merredin,1.0444,True,loss_factor_report_2026-27.pdf,
+MUCHEA_ESR1,2023-24,2023-10-01,WMUC,Muchea,1.0008,True,loss_factor_report_2023-24.pdf,
+MUCHEA_ESR1,2024-25,2024-07-01,WMUC,Muchea,1.0041,True,loss_factor_report_2024-25.pdf,
+MUCHEA_ESR1,2025-26,2025-07-01,WMUC,Muchea,1.0066,True,loss_factor_report_2025-26.pdf,
+MUCHEA_ESR1,2026-27,2026-07-01,WMUC,Muchea,1.0072,True,loss_factor_report_2026-27.pdf,

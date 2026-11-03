@@ -86,4 +86,9 @@ All market data is from AEMO's public data file portal at
 which is why there is no offer-curve analysis: post-reform Real-Time Market Submissions
 are participant-only. Rules, Procedures, Loss Factor Reports, Quarterly Energy Dynamics
 and CSIRO GenCost are fetched by `src/download_docs.py` into `data/reference/docs/`.
-`data/` is git-ignored apart from `data/reference/`, which holds hand-curated inputs.
+
+Nothing under `data/` is tracked except `data/reference/loss_factors.csv`, which is a
+cited input rather than an output: rebuilding it needs the annual Loss Factor Report
+PDFs, which are third-party documents and are left to be re-downloaded. Everything else
+is reproducible — raw files from `src/download_data.py`, parquet from `src/clean.py`,
+reference documents from `src/download_docs.py`.
