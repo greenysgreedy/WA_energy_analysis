@@ -666,6 +666,68 @@ RCP_TYPE_ALIASES = {
 }
 
 
+def clean_fcess_uplift() -> tuple[pd.DataFrame, CheckResult]:
+    """FCESS Uplift Payments per facility per dispatch interval.
+
+    Modelled revenue excludes Uplift, because computing it requires offer data that is
+    not public (``docs/assumptions.md`` E5, F6). This dataset does not let the exclusion
+    be reversed, but it does let its size be measured: Uplift is published per facility,
+    so whether *storage* ever received any can be answered directly.
+    """
+    files = sorted((RAW / "fcess-uplift-payments").glob("*.csv"))
+    if not files:
+        raise FileNotFoundError("no files in data/raw/fcess-uplift-payments")
+
+    renames = {
+        "Trading Date": "trading_date",
+        "Dispatch Interval": "interval_start",
+        "Facility Code": "facility_code",
+        "FCESS Uplift Payment ($)": "uplift_total",
+        "FCESS Uplift Share CR ($)": "uplift_contingency_lower",  # transposed, see D9
+        "FCESS Uplift Share CL ($)": "uplift_contingency_raise",  # transposed, see D9
+        "FCESS Uplift Share RR ($)": "uplift_regulation_raise",
+        "FCESS Uplift Share RL ($)": "uplift_regulation_lower",
+        "FCESS Uplift Share RCS ($)": "uplift_rocof",
+    }
+
+    frames = []
+    for path in files:
+        raw = read_aemo_csv(path)
+        raw = raw.rename(columns=renames)
+        # The RoCoF share column was dropped from the 2025 file onwards.
+        for column in set(renames.values()) - set(raw.columns):
+            raw[column] = 0.0
+        frames.append(raw[list(dict.fromkeys(renames.values()))])
+
+    frame = pd.concat(frames, ignore_index=True)
+    frame["interval_start"] = pd.to_datetime(frame["interval_start"], format="%Y-%m-%d %H:%M:%S")
+    frame["trading_date"] = trading_date(frame["interval_start"])
+    frame = frame.sort_values(["interval_start", "facility_code"], ignore_index=True)
+    frame = post_reform_only(frame)
+
+    value_columns = [c for c in frame.columns if c.startswith("uplift_")]
+    frame[value_columns] = frame[value_columns].astype(float).fillna(0.0)
+
+    result = CheckResult(name="fcess_uplift", rows=len(frame))
+    result.first_interval = frame["interval_start"].min()
+    result.last_interval = frame["interval_start"].max()
+    result.trading_days = int(frame["trading_date"].nunique())
+    result.duplicate_keys = int(
+        frame.duplicated(subset=["interval_start", "facility_code"]).sum()
+    )
+    if result.duplicate_keys:
+        raise ValueError(
+            f"fcess_uplift: {result.duplicate_keys:,} duplicate (interval, facility) rows"
+        )
+
+    by_year = frame.groupby(frame["trading_date"].dt.year)["uplift_total"].sum() / 1e6
+    result.notes.append(
+        "uplift paid, $m by year: " + ", ".join(f"{y}={v:,.1f}" for y, v in by_year.items())
+    )
+    result.notes.append(f"facilities receiving uplift: {frame['facility_code'].nunique()}")
+    return frame, result
+
+
 def clean_reserve_capacity_prices() -> tuple[pd.DataFrame, CheckResult]:
     """Reserve Capacity Price per capacity year, one file per year.
 
@@ -796,6 +858,7 @@ SIMPLE_CLEANERS = {
     "fcess_accreditation": clean_fcess_accreditation,
     "capacity_credits": clean_capacity_credits,
     "reserve_capacity_prices": clean_reserve_capacity_prices,
+    "fcess_uplift": clean_fcess_uplift,
 }
 
 PARTITIONED_CLEANERS = {

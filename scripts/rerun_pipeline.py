@@ -21,8 +21,10 @@ ROOT = Path(__file__).resolve().parents[1]
 STAGES: list[tuple[str, list[str]]] = [
     ("clean_prices", ["-m", "src.clean", "--only", "prices_5min", "--force"]),
     ("clean_schedule", ["-m", "src.clean", "--only", "market_schedule", "--force"]),
+    ("clean_uplift", ["-m", "src.clean", "--only", "fcess_uplift", "--force"]),
     ("fcess_market", ["-m", "src.fcess_market", "--build"]),
     ("service_mapping_check", ["scripts/check_service_mapping.py"]),
+    ("uplift_check", ["scripts/check_uplift.py"]),
     ("strategies", ["scripts/run_strategies.py", "--workers", "6"]),
     ("backcast", ["scripts/run_backcast.py"]),
     ("reconcile", ["-m", "src.reconcile"]),

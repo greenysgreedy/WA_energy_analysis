@@ -484,10 +484,24 @@ System Service Enablement Quantity published under 7.13.1E(c). What is public is
 dispatch run's schedule quantity, which may differ after outage adjustments. The
 whole-market reconciliation in section 6 bounds the resulting error at a few per cent.
 
-**Uplift is excluded.** Both Energy Uplift and FCESS Uplift require offer data to
-compute. Excluding them makes modelled revenue a lower bound on those components. For
-scale, FCESS Uplift was $50.9m across the whole market in Q4 2024 and $2.1m in Q4 2025
-after the FCESS Cost Review.
+**Uplift is excluded, and that turns out not to matter for storage.** Both Energy Uplift
+and FCESS Uplift require offer data to compute, so neither is modelled. FCESS Uplift is
+published per facility, though, so the size of the omission was measured rather than
+guessed: of **$303.2m** paid market-wide over the period, storage received **$48,000, or
+0.016%**. The ten largest recipients are all synchronous thermal plant — Alinta Wagerup
+$102m across two units, NewGen Kwinana $40m, the Bluewaters and Muja units, the Kwinana
+gas turbines. Excluding Uplift therefore understates modelled storage revenue by about
+0.02%. Energy Uplift is not published per facility and remains unquantified, but it was
+$2.3m market-wide in Q4 2025 against $7.2m of FCESS enablement, so it is a small number
+being shared among mostly thermal recipients.
+
+That $303m is itself part of the story rather than a footnote. Uplift compensates
+facilities dispatched against their own offer, which in practice meant paying synchronous
+plant to stay committed so it could provide frequency services. Annual totals fell from
+$249.0m in 2024 to $22.2m in 2025 and $1.2m in 2026 — independently corroborating AEMO's
+account of the November 2024 FCESS Cost Review — over exactly the period in which
+batteries took the frequency markets. The batteries did not only compete away the
+enablement price; they removed the reason for the commitment payments.
 
 **The entrant's FCESS share is calibrated, not derived.** The fleet-utilisation ceiling
 assumes a new battery wins enablement at the same rate per accredited MW as the operating
