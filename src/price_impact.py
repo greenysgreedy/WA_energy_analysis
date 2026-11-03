@@ -198,6 +198,45 @@ def commissioning_dates(fleet: dict) -> pd.Series:
     ).sort_values()
 
 
+def fleet_from_summary(path=None) -> pd.DataFrame:
+    """The storage register from ``outputs/backcast_summary.csv``.
+
+    The event study and the capacity series need only three columns per facility: when it
+    started operating, its rating and its usable energy. Reading them from the summary the
+    backcast already wrote avoids rebuilding every facility's revenue from 23 million rows
+    of SCADA just to recover three numbers.
+    """
+    from src.paths import OUTPUTS
+
+    path = path or OUTPUTS / "backcast_summary.csv"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} not found. Run 'python scripts/run_backcast.py' first."
+        )
+
+    summary = pd.read_csv(path, index_col=0)
+    summary = summary.loc[summary["first_full_month"].notna()]
+    summary = summary.loc[summary["first_full_month"] != "None"]
+    summary["from"] = pd.PeriodIndex(summary["first_full_month"], freq="M").to_timestamp()
+    return summary
+
+
+def commissioning_dates_from_summary(path=None) -> pd.Series:
+    """First full operating month per facility, read from the backcast summary."""
+    summary = fleet_from_summary(path)
+    return summary["from"].sort_values()
+
+
+def cumulative_storage_capacity_from_summary(path=None) -> pd.DataFrame:
+    """Operating storage MW and MWh over time, read from the backcast summary."""
+    summary = fleet_from_summary(path).sort_values("from").reset_index()
+    frame = summary[["facility_code", "from", "observed_peak_mw", "usable_mwh"]].copy()
+    frame = frame.rename(columns={"observed_peak_mw": "rating_mw"})
+    frame["cumulative_mw"] = frame["rating_mw"].cumsum()
+    frame["cumulative_mwh"] = frame["usable_mwh"].cumsum()
+    return frame
+
+
 def event_study(
     metrics: pd.DataFrame,
     events: pd.Series,
@@ -260,10 +299,19 @@ def capacity_against_spread(metrics: pd.DataFrame, capacity: pd.DataFrame) -> pd
     this short is suggestive, not causal, and is reported as such.
     """
     monthly = metrics.resample("MS").median()
-    series = pd.Series(0.0, index=monthly.index)
-    for row in capacity.itertuples():
-        series.loc[series.index >= row._2] = row.cumulative_mw
+    mw = pd.Series(0.0, index=monthly.index)
+    mwh = pd.Series(0.0, index=monthly.index)
+
+    # Column access by name rather than itertuples: "from" is a Python keyword, so
+    # itertuples silently renames it to a positional label.
+    ordered = capacity.sort_values("from")
+    for start, cumulative_mw, cumulative_mwh in zip(
+        ordered["from"], ordered["cumulative_mw"], ordered["cumulative_mwh"]
+    ):
+        mw.loc[mw.index >= start] = cumulative_mw
+        mwh.loc[mwh.index >= start] = cumulative_mwh
 
     out = monthly[["capturable_spread_2h", "spread", "fcess_price_sum", "negative_share"]].copy()
-    out["operating_storage_mw"] = series
+    out["operating_storage_mw"] = mw
+    out["operating_storage_mwh"] = mwh
     return out
